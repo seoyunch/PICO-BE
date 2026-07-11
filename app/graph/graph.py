@@ -1,12 +1,12 @@
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
 
-from app.graph.state import PicoState
 from app.graph.nodes import (
-    market_research_node,
-    pestel_node,
     competitor_analysis_node,
     draft_node,
+    market_research_node,
+    pestel_node,
 )
+from app.graph.state import PicoState
 
 
 def build_graph():
