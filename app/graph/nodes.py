@@ -2,7 +2,6 @@ from langgraph.types import interrupt
 
 from app.graph.state import PicoState
 from app.services.llm_client import llm_client
-from app.services.search_client import search_client
 
 
 async def _run_analysis(state: PicoState, stage_key: str, *, use_search: bool) -> dict:
@@ -10,12 +9,10 @@ async def _run_analysis(state: PicoState, stage_key: str, *, use_search: bool) -
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
 
     context = {"idea": state["idea"], "keywords": keywords}
-    if use_search:
-        context["search_results"] = await search_client.search(" ".join(keywords))
     if stage_key == "pestel":
         context["market_research"] = state["market_research"]["analysis"]
 
-    analysis = await llm_client.synthesize_analysis(stage_key, context)
+    analysis = await llm_client.synthesize_analysis(stage_key, context, use_search=use_search)
     return {stage_key: {**stage, "keywords": keywords, "analysis": analysis}}
 
 
