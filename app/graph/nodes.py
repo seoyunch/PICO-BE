@@ -3,6 +3,7 @@ from langgraph.types import interrupt
 from app.graph.state import PicoState
 from app.services.llm_client import llm_client
 from app.services.search_client import search_client
+from app.utils.citations import verify_citations
 
 
 async def _run_analysis(state: PicoState, stage_key: str, *, use_search: bool) -> dict:
@@ -16,6 +17,8 @@ async def _run_analysis(state: PicoState, stage_key: str, *, use_search: bool) -
         context["market_research"] = state["market_research"]["analysis"]
 
     analysis = await llm_client.synthesize_analysis(stage_key, context)
+    if use_search:
+        analysis = verify_citations(analysis, context["search_results"])
     return {stage_key: {**stage, "keywords": keywords, "analysis": analysis}}
 
 
