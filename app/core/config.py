@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "PICO"
-    API_V1_STR: str = "/api/v1"
+    API_STR: str = "/api"
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
     CLOVA_API_KEY: str = ""
