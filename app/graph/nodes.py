@@ -60,7 +60,19 @@ async def market_research_review_node(state: PicoState) -> dict:
 
 
 async def pestel_analyze_node(state: PicoState) -> dict:
-    return await _run_analysis(state, "pestel", use_search=False)
+    stage = state["pestel"]
+    keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
+    market_research = state["market_research"]["analysis"]
+
+    context = {"idea": state["idea"], "keywords": keywords, "market_research": market_research}
+    query = await llm_client.decide_pestel_search_query(state["idea"], market_research)
+    if query:
+        context["search_results"] = await search_client.search(query)
+
+    analysis = await llm_client.synthesize_analysis("pestel", context)
+    if query:
+        analysis = verify_citations(analysis, context["search_results"])
+    return {"pestel": {**stage, "keywords": keywords, "analysis": analysis}}
 
 
 async def pestel_review_node(state: PicoState) -> dict:
