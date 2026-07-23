@@ -30,21 +30,33 @@ def build_graph():
     graph.add_conditional_edges(
         "market_research_review_node",
         route_by_approval("market_research"),
-        {"approve": "pestel_analyze_node", "revise": "market_research_analyze_node"},
+        {
+            "approve": "pestel_analyze_node",
+            "revise": "market_research_analyze_node",
+            "chat": "market_research_review_node",
+        },
     )
 
     graph.add_edge("pestel_analyze_node", "pestel_review_node")
     graph.add_conditional_edges(
         "pestel_review_node",
         route_by_approval("pestel"),
-        {"approve": "competitor_analyze_node", "revise": "pestel_analyze_node"},
+        {
+            "approve": "competitor_analyze_node",
+            "revise": "pestel_analyze_node",
+            "chat": "pestel_review_node",
+        },
     )
 
     graph.add_edge("competitor_analyze_node", "competitor_review_node")
     graph.add_conditional_edges(
         "competitor_review_node",
         route_by_approval("competitor_analysis"),
-        {"approve": "draft_node", "revise": "competitor_analyze_node"},
+        {
+            "approve": "draft_node",
+            "revise": "competitor_analyze_node",
+            "chat": "competitor_review_node",
+        },
     )
 
     graph.add_edge("draft_node", END)

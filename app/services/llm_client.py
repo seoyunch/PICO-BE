@@ -4,6 +4,12 @@ import httpx
 
 from app.core.config import settings
 
+_STAGE_LABELS = {
+    "market_research": "시장조사",
+    "pestel": "PESTEL 분석",
+    "competitor_analysis": "경쟁사 비교분석",
+}
+
 
 class LLMClient:
     def __init__(self) -> None:
@@ -177,13 +183,34 @@ class LLMClient:
             "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열)"
         )
 
+    async def classify_feedback_intent(self, stage: str, message: str) -> str:
+        stage_label = _STAGE_LABELS.get(stage, stage)
+        result = await self._generate(
+            f"당신은 {stage_label} 담당 애널리스트입니다. 사용자가 분석 결과를 보고 "
+            "아래와 같이 말했습니다.\n\n"
+            f"[사용자 메시지]\n{message}\n\n"
+            "이 메시지가 다음 중 무엇에 해당하는지 판단해줘:\n"
+            "- edit: 분석 본문 내용을 실제로 바꿔달라는 요청 "
+            "(예: '~~를 반영해서 수정해줘', '~~ 내용을 더 자세히 다뤄줘', '~~는 빼줘')\n"
+            "- chat: 아직 본문 수정을 명시적으로 요청하지 않은 단순 질문이나 의견 요청 "
+            "(예: '이 문제를 완화할 방법이 있을까?', '이게 왜 이런거야?')\n\n"
+            "정확히 'edit' 또는 'chat' 중 하나만, 그 단어만 답해줘. 다른 설명은 절대 넣지 마."
+        )
+        first_line = result.strip().splitlines()[0].strip(" *\"'").lower() if result.strip() else ""
+        return "edit" if first_line == "edit" else "chat"
+
+    async def answer_question(self, stage: str, message: str, analysis: str) -> str:
+        stage_label = _STAGE_LABELS.get(stage, stage)
+        return await self._generate(
+            f"당신은 {stage_label} 담당 애널리스트입니다. 아래는 방금 작성한 분석 내용입니다.\n\n"
+            f"[분석 내용]\n{analysis}\n\n"
+            f"[사용자 질문]\n{message}\n\n"
+            "위 분석 내용을 참고해서 사용자의 질문에 대화체로 답변해줘. 분석 본문 형식"
+            "(번호, 표 등)을 새로 만들지 말고, 질문에 대한 답만 자연스럽게 설명해줘."
+        )
+
     async def interpret_feedback(self, stage: str, message: str, prior_state: dict) -> list[str]:
-        stage_labels = {
-            "market_research": "시장조사",
-            "pestel": "PESTEL 분석",
-            "competitor_analysis": "경쟁사 비교분석",
-        }
-        stage_label = stage_labels.get(stage, stage)
+        stage_label = _STAGE_LABELS.get(stage, stage)
         prior_keywords = prior_state.get("keywords", [])
 
         result = await self._generate(

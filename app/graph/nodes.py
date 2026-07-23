@@ -36,7 +36,27 @@ async def _run_review(state: PicoState, stage_key: str) -> dict:
     chat_history = stage["chat_history"] + [{"role": "user", "content": message}]
 
     if decision.get("action") == "approve":
-        return {stage_key: {**stage, "chat_history": chat_history, "approved": True}}
+        return {
+            stage_key: {
+                **stage,
+                "chat_history": chat_history,
+                "approved": True,
+                "last_intent": "approve",
+            }
+        }
+
+    intent = await llm_client.classify_feedback_intent(stage_key, message)
+    if intent == "chat":
+        answer = await llm_client.answer_question(stage_key, message, stage["analysis"])
+        chat_history = chat_history + [{"role": "assistant", "content": answer}]
+        return {
+            stage_key: {
+                **stage,
+                "chat_history": chat_history,
+                "approved": False,
+                "last_intent": "chat",
+            }
+        }
 
     new_keywords = await llm_client.interpret_feedback(stage_key, message, stage)
     return {
@@ -45,13 +65,19 @@ async def _run_review(state: PicoState, stage_key: str) -> dict:
             "chat_history": chat_history,
             "keywords": new_keywords,
             "approved": False,
+            "last_intent": "edit",
         }
     }
 
 
 def route_by_approval(stage_key: str):
     def _route(state: PicoState) -> str:
-        return "approve" if state[stage_key]["approved"] else "revise"
+        stage = state[stage_key]
+        if stage["approved"]:
+            return "approve"
+        if stage["last_intent"] == "chat":
+            return "chat"
+        return "revise"
 
     return _route
 
