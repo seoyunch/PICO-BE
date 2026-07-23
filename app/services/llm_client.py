@@ -178,12 +178,26 @@ class LLMClient:
         )
 
     async def interpret_feedback(self, stage: str, message: str, prior_state: dict) -> list[str]:
-        # TODO: 사용자 피드백을 새 키워드/포커스 목록으로 변환하는 프롬프트로 교체
+        stage_labels = {
+            "market_research": "시장조사",
+            "pestel": "PESTEL 분석",
+            "competitor_analysis": "경쟁사 비교분석",
+        }
+        stage_label = stage_labels.get(stage, stage)
+        prior_keywords = prior_state.get("keywords", [])
+
         result = await self._generate(
-            f"[{stage}] 기존 키워드 {prior_state.get('keywords')}에 대해 "
-            f"사용자가 이렇게 피드백했어: '{message}'. 새 키워드를 뽑아줘."
+            f"당신은 {stage_label} 담당 애널리스트입니다. "
+            "사용자가 이전 분석 결과에 대해 수정 요청을 했습니다.\n\n"
+            f"[기존 검색 키워드]\n{', '.join(prior_keywords)}\n\n"
+            f"[사용자 수정 요청]\n{message}\n\n"
+            "이 수정 요청을 반영해서 다시 검색할 새 키워드를 뽑아줘. 기존 키워드 중 "
+            "여전히 유효한 것은 유지하고, 요청 내용을 반영한 키워드를 추가/교체해줘.\n"
+            "정확히 3~5개만, 쉼표(,)로 구분한 한 줄로만 답해줘. "
+            "설명, 번호 매기기, 마크다운, 줄바꿈은 절대 넣지 마."
         )
-        return [kw.strip() for kw in result.split(",") if kw.strip()]
+        first_line = result.strip().splitlines()[0] if result.strip() else ""
+        return [kw.strip(" *") for kw in first_line.split(",") if kw.strip(" *")]
 
     async def synthesize_draft(
         self, market_research: str, pestel: str, competitor_analysis: str
@@ -204,7 +218,15 @@ class LLMClient:
             "(PESTEL 분석 내용을 요약. 6개 요인과 종합 시사점 위주로)\n\n"
             "# 4. 경쟁사 비교\n"
             "(경쟁사 비교 분석 내용을 요약. 경쟁 구도와 차별화 포인트 위주로)\n\n"
-            "# 5. 종합 결론 및 제언\n"
+            "# 5. 핵심 기능\n"
+            "(시장조사의 타겟 고객 니즈, 경쟁사 비교의 차별화 포인트를 근거로 "
+            "이 서비스가 갖춰야 할 핵심 기능을 4~6개 도출해서 아래 마크다운 표로 작성해줘.\n"
+            "난이도는 개발 구현 난이도, 중요도는 서비스 핵심 가치에 대한 기여도를 뜻하며 "
+            "반드시 '상'/'중'/'하' 셋 중 하나로만 표기해줘.)\n\n"
+            "| 기능명 | 설명 | 난이도 | 중요도 |\n"
+            "|---|---|---|---|\n"
+            "| ... | ... | 상/중/하 | 상/중/하 |\n\n"
+            "# 6. 종합 결론 및 제언\n"
             "(위 세 분석을 종합했을 때 이 아이디어의 핵심 기회 요인과 리스크를 각각 2~3개씩, "
             "그리고 다음 단계로 무엇을 검증/실행해야 할지 제언)"
         )
