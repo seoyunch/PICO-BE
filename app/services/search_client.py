@@ -5,19 +5,31 @@ from app.core.config import settings
 
 class SearchClient:
     def __init__(self) -> None:
-        self.api_key = settings.SEARCH_API_KEY
-        self.base_url = settings.SEARCH_API_BASE_URL
+        self.client_id = settings.NAVER_CLIENT_ID
+        self.client_secret = settings.NAVER_CLIENT_SECRET
 
-    async def search(self, query: str) -> list[dict]:
-        # TODO: 실제 검색 API 응답 포맷에 맞춰 구현
-        async with httpx.AsyncClient(base_url=self.base_url) as client:
+    async def search(self, query: str, *, display: int = 10) -> list[dict]:
+        async with httpx.AsyncClient(
+            base_url="https://naverapihub.apigw.ntruss.com", timeout=30.0
+        ) as client:
             response = await client.get(
-                "/",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                params={"query": query},
+                "/search/v1/webkr",
+                headers={
+                    "X-NCP-APIGW-API-KEY-ID": self.client_id,
+                    "X-NCP-APIGW-API-KEY": self.client_secret,
+                },
+                params={"query": query, "display": display},
             )
             response.raise_for_status()
-            return response.json()
+            items = response.json().get("items", [])
+            return [
+                {
+                    "title": item.get("title", ""),
+                    "link": item.get("link", ""),
+                    "description": item.get("description", ""),
+                }
+                for item in items
+            ]
 
 
 search_client = SearchClient()

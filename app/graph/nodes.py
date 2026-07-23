@@ -1,21 +1,132 @@
+from langgraph.types import interrupt
+
 from app.graph.state import PicoState
+from app.services.llm_client import llm_client
+from app.services.search_client import search_client
+from app.utils.citations import verify_citations
 
 
-def market_research_node(state: PicoState) -> dict:
-    # TODO: 웹검색 API + RAG 기반 시장조사 구현
-    return {"market_research": ""}
+async def _run_analysis(
+    state: PicoState, stage_key: str, *, use_search: bool, search_query_suffix: str | None = None
+) -> dict:
+    stage = state[stage_key]
+    keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
+
+    context = {"idea": state["idea"], "keywords": keywords}
+    if use_search:
+        query = " ".join(keywords)
+        if search_query_suffix:
+            query = f"{query} {search_query_suffix}"
+        context["search_results"] = await search_client.search(query)
+    if stage_key == "pestel":
+        context["market_research"] = state["market_research"]["analysis"]
+
+    analysis = await llm_client.synthesize_analysis(stage_key, context)
+    if use_search:
+        analysis = verify_citations(analysis, context["search_results"])
+    return {stage_key: {**stage, "keywords": keywords, "analysis": analysis}}
 
 
-def pestel_node(state: PicoState) -> dict:
-    # TODO: PESTEL 분석 구현
-    return {"pestel": ""}
+async def _run_review(state: PicoState, stage_key: str) -> dict:
+    stage = state[stage_key]
+    decision = interrupt(
+        {"stage": stage_key, "keywords": stage["keywords"], "analysis": stage["analysis"]}
+    )
+    message = decision.get("message", "")
+    chat_history = stage["chat_history"] + [{"role": "user", "content": message}]
+
+    if decision.get("action") == "approve":
+        return {
+            stage_key: {
+                **stage,
+                "chat_history": chat_history,
+                "approved": True,
+                "last_intent": "approve",
+            }
+        }
+
+    intent = await llm_client.classify_feedback_intent(stage_key, message)
+    if intent == "chat":
+        answer = await llm_client.answer_question(stage_key, message, stage["analysis"])
+        chat_history = chat_history + [{"role": "assistant", "content": answer}]
+        return {
+            stage_key: {
+                **stage,
+                "chat_history": chat_history,
+                "approved": False,
+                "last_intent": "chat",
+            }
+        }
+
+    new_keywords = await llm_client.interpret_feedback(stage_key, message, stage)
+    return {
+        stage_key: {
+            **stage,
+            "chat_history": chat_history,
+            "keywords": new_keywords,
+            "approved": False,
+            "last_intent": "edit",
+        }
+    }
 
 
-def competitor_analysis_node(state: PicoState) -> dict:
-    # TODO: 경쟁사 비교 분석 구현
-    return {"competitor_analysis": ""}
+def route_by_approval(stage_key: str):
+    def _route(state: PicoState) -> str:
+        stage = state[stage_key]
+        if stage["approved"]:
+            return "approve"
+        if stage["last_intent"] == "chat":
+            return "chat"
+        return "revise"
+
+    return _route
 
 
-def draft_node(state: PicoState) -> dict:
-    # TODO: 기획서 초안 생성 구현
-    return {"draft": ""}
+async def market_research_analyze_node(state: PicoState) -> dict:
+    return await _run_analysis(state, "market_research", use_search=True)
+
+
+async def market_research_review_node(state: PicoState) -> dict:
+    return await _run_review(state, "market_research")
+
+
+async def pestel_analyze_node(state: PicoState) -> dict:
+    stage = state["pestel"]
+    keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
+    market_research = state["market_research"]["analysis"]
+
+    context = {"idea": state["idea"], "keywords": keywords, "market_research": market_research}
+    query = await llm_client.decide_pestel_search_query(state["idea"], market_research)
+    if query:
+        context["search_results"] = await search_client.search(query)
+
+    analysis = await llm_client.synthesize_analysis("pestel", context)
+    if query:
+        analysis = verify_citations(analysis, context["search_results"])
+    return {"pestel": {**stage, "keywords": keywords, "analysis": analysis}}
+
+
+async def pestel_review_node(state: PicoState) -> dict:
+    return await _run_review(state, "pestel")
+
+
+async def competitor_analyze_node(state: PicoState) -> dict:
+    return await _run_analysis(
+        state,
+        "competitor_analysis",
+        use_search=True,
+        search_query_suffix="경쟁 서비스 비교 가격 기능",
+    )
+
+
+async def competitor_review_node(state: PicoState) -> dict:
+    return await _run_review(state, "competitor_analysis")
+
+
+async def draft_node(state: PicoState) -> dict:
+    draft = await llm_client.synthesize_draft(
+        state["market_research"]["analysis"],
+        state["pestel"]["analysis"],
+        state["competitor_analysis"]["analysis"],
+    )
+    return {"draft": draft}
