@@ -6,13 +6,18 @@ from app.services.search_client import search_client
 from app.utils.citations import verify_citations
 
 
-async def _run_analysis(state: PicoState, stage_key: str, *, use_search: bool) -> dict:
+async def _run_analysis(
+    state: PicoState, stage_key: str, *, use_search: bool, search_query_suffix: str | None = None
+) -> dict:
     stage = state[stage_key]
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
 
     context = {"idea": state["idea"], "keywords": keywords}
     if use_search:
-        context["search_results"] = await search_client.search(" ".join(keywords))
+        query = " ".join(keywords)
+        if search_query_suffix:
+            query = f"{query} {search_query_suffix}"
+        context["search_results"] = await search_client.search(query)
     if stage_key == "pestel":
         context["market_research"] = state["market_research"]["analysis"]
 
@@ -80,7 +85,12 @@ async def pestel_review_node(state: PicoState) -> dict:
 
 
 async def competitor_analyze_node(state: PicoState) -> dict:
-    return await _run_analysis(state, "competitor_analysis", use_search=True)
+    return await _run_analysis(
+        state,
+        "competitor_analysis",
+        use_search=True,
+        search_query_suffix="경쟁 서비스 비교 가격 기능",
+    )
 
 
 async def competitor_review_node(state: PicoState) -> dict:
