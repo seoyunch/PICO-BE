@@ -7,7 +7,11 @@ from app.core.config import settings
 _STAGE_LABELS = {
     "market_research": "시장조사",
     "pestel": "PESTEL 분석",
+    "lean_canvas": "Lean Canvas",
     "competitor_analysis": "경쟁사 비교분석",
+    "market_sizing": "TAM/SAM/SOM 시장 사이징",
+    "vpc_features": "VPC 및 핵심 기능 정의",
+    "mvp_roadmap": "MVP 및 개발 로드맵",
 }
 
 
@@ -50,8 +54,16 @@ class LLMClient:
             return await self._generate(self._market_research_prompt(context))
         if stage == "pestel":
             return await self._generate(self._pestel_prompt(context))
+        if stage == "lean_canvas":
+            return await self._generate(self._lean_canvas_prompt(context))
         if stage == "competitor_analysis":
             return await self._generate(self._competitor_analysis_prompt(context))
+        if stage == "market_sizing":
+            return await self._generate(self._market_sizing_prompt(context))
+        if stage == "vpc_features":
+            return await self._generate(self._vpc_features_prompt(context))
+        if stage == "mvp_roadmap":
+            return await self._generate(self._mvp_roadmap_prompt(context))
         return await self._generate(f"[{stage}] 아래 컨텍스트를 바탕으로 분석해줘: {context}")
 
     def _market_research_prompt(self, context: dict) -> str:
@@ -145,6 +157,50 @@ class LLMClient:
             f"{sources_instruction}"
         )
 
+    def _feedback_points_block(self, keywords: list[str]) -> str:
+        if not keywords:
+            return ""
+        return f"\n\n[이전 수정 요청에서 반영할 포인트]\n{', '.join(keywords)}"
+
+    def _lean_canvas_prompt(self, context: dict) -> str:
+        idea = context.get("idea", "")
+        market_research = context.get("market_research", "")
+        pestel = context.get("pestel", "")
+        feedback_block = self._feedback_points_block(context.get("keywords", []))
+        return (
+            "당신은 스타트업 비즈니스 모델을 설계하는 전략가입니다. "
+            "Lean Canvas 9개 블록을 가설 형태로 작성합니다.\n\n"
+            f"[아이디어]\n{idea}\n\n"
+            f"[시장조사 분석]\n{market_research}\n\n"
+            f"[PESTEL 분석]\n{pestel}"
+            f"{feedback_block}\n\n"
+            "위 분석 내용을 근거로 삼되, 이 단계부터는 검증되지 않은 가설을 세우는 "
+            "단계이니 확정된 사실인 것처럼 쓰지 말고 '~일 것으로 가정한다' 식으로 "
+            "가설 톤을 유지해줘. 아래 9개 블록을 한국어로 작성해줘.\n\n"
+            "1. Problem\n"
+            "(핵심 문제 Top 3 + 현재 사용자가 쓰는 대안)\n\n"
+            "2. Customer Segments\n"
+            "(Early Adopter를 구체적으로 특정)\n\n"
+            "3. Unique Value Proposition\n"
+            "(왜 이 서비스를 선택해야 하는지 단일 메시지로)\n\n"
+            "4. Solution\n"
+            "(Problem을 해결하는 핵심 기능 3개 이내)\n\n"
+            "5. Channels\n"
+            "(타겟 고객에게 도달할 경로)\n\n"
+            "6. Revenue Streams\n"
+            "(수익 모델과 단가 가설)\n\n"
+            "7. Cost Structure\n"
+            "(고정비/변동비/CAC/인프라 비용 가설)\n\n"
+            "8. Key Metrics\n"
+            "(AARRR 또는 North Star Metric 중 이 서비스에 맞는 것 선택)\n\n"
+            "9. Unfair Advantage\n"
+            "(경쟁자가 쉽게 모방할 수 없는 우위. 없으면 '아직 명확한 우위 없음'이라고 "
+            "솔직히 밝혀줘)\n\n"
+            "10. 핵심 가설 3개 및 검증 계획\n"
+            "(위 9블록 중 이 사업의 성패를 가장 크게 좌우할 가설 3개를 뽑아, "
+            "각각 어떻게 검증할지 - 예: 랜딩페이지 테스트, 사전예약, 인터뷰 - 함께 제시)"
+        )
+
     def _competitor_analysis_prompt(self, context: dict) -> str:
         idea = context.get("idea", "")
         keywords = context.get("keywords", [])
@@ -181,6 +237,102 @@ class LLMClient:
             "(위 경쟁사 대비 이 아이디어가 가질 수 있는 차별화 요소 2~3개)\n\n"
             "4. 참고한 출처\n"
             "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열)"
+        )
+
+    def _market_sizing_prompt(self, context: dict) -> str:
+        idea = context.get("idea", "")
+        keywords = context.get("keywords", [])
+        market_research = context.get("market_research", "")
+        search_results = context.get("search_results", [])
+        sources_text = (
+            "\n".join(
+                f"- {r.get('title', '')}: {r.get('link', '')}\n  {r.get('description', '')}"
+                for r in search_results
+            )
+            or "(검색 결과 없음)"
+        )
+        return (
+            "당신은 시장 규모를 추정하는 애널리스트입니다. TAM/SAM/SOM을 산정합니다.\n\n"
+            f"[아이디어]\n{idea}\n\n"
+            f"[검색 키워드]\n{', '.join(keywords)}\n\n"
+            f"[시장조사 분석 결과 (참고용 컨텍스트)]\n{market_research}\n\n"
+            f"[시장 규모 관련 검색 결과]\n{sources_text}\n\n"
+            "위 내용에 근거해서 아래 형식으로 한국어로 작성해줘. 정확한 통계가 없으면 "
+            "지어내지 말고 어떤 가정으로 추정했는지 명시하고 '추정치'라고 밝혀줘.\n\n"
+            "1. TAM (Total Addressable Market)\n"
+            "(전체 잠재 시장 규모와 산출 근거: 잠재 사용자 수 × 평균 지출 등)\n\n"
+            "2. SAM (Serviceable Addressable Market)\n"
+            "(지역/언어/연령 등으로 좁힌 도달 가능 시장과 그 근거)\n\n"
+            "3. SOM (Serviceable Obtainable Market)\n"
+            "(1~3년차에 실제 점유 가능한 시장, 보통 SAM의 1~5% 수준, 근거와 함께)\n\n"
+            "4. 교차 검증\n"
+            "(Top-down 추정치와, 가능하면 Bottom-up 추정치(고객수 × 단가 × 이용빈도)를 "
+            "비교해서 두 방식이 얼마나 일치/차이 나는지 서술)\n\n"
+            "5. 참고한 출처\n"
+            "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열. 없으면 "
+            "'참고할 만한 검색 출처 없음, 일반 상식 기반 추정'이라고 밝혀줘)"
+        )
+
+    def _vpc_features_prompt(self, context: dict) -> str:
+        idea = context.get("idea", "")
+        market_research = context.get("market_research", "")
+        competitor_analysis = context.get("competitor_analysis", "")
+        feedback_block = self._feedback_points_block(context.get("keywords", []))
+        return (
+            "당신은 Value Proposition Canvas(VPC)로 서비스 컨셉과 핵심 기능을 "
+            "정의하는 PO입니다.\n\n"
+            f"[아이디어]\n{idea}\n\n"
+            f"[시장조사 분석 - 타겟 고객 니즈]\n{market_research}\n\n"
+            f"[경쟁사 비교 분석 - 차별화 포인트]\n{competitor_analysis}"
+            f"{feedback_block}\n\n"
+            "위 내용을 근거로 아래 형식에 맞춰 한국어로 작성해줘.\n\n"
+            "1. 고객 프로필\n"
+            "- Customer Jobs: (고객이 해결하려는 과제)\n"
+            "- Pains: (수행 중 겪는 불편·장애)\n"
+            "- Gains: (원하는 결과·기대 가치)\n\n"
+            "2. 가치 지도\n"
+            "- Products & Services: (제공할 제품/서비스)\n"
+            "- Pain Relievers: (Pain을 해소하는 방식)\n"
+            "- Gain Creators: (Gain을 강화하는 방식)\n\n"
+            "3. Fit 검증\n"
+            "(고객 프로필과 가치 지도가 얼마나 맞아떨어지는지, 안 맞는 부분이 있다면 "
+            "무엇인지 솔직히 서술)\n\n"
+            "4. 핵심 기능 (5~7개)\n"
+            "위 Fit을 근거로 핵심 기능을 아래 마크다운 표로 작성해줘. 난이도는 개발 "
+            "구현 난이도, 중요도는 핵심 가치 기여도를 뜻하며 반드시 '상'/'중'/'하' "
+            "셋 중 하나로만 표기해줘.\n\n"
+            "| 기능명 | 설명 | 난이도 | 중요도 |\n"
+            "|---|---|---|---|\n"
+            "| ... | ... | 상/중/하 | 상/중/하 |\n\n"
+            "5. Use Case (3종)\n"
+            "(위 핵심 기능이 실제로 어떻게 쓰이는지 구체적 시나리오 3개, 각 2~3문장)"
+        )
+
+    def _mvp_roadmap_prompt(self, context: dict) -> str:
+        idea = context.get("idea", "")
+        vpc_features = context.get("vpc_features", "")
+        feedback_block = self._feedback_points_block(context.get("keywords", []))
+        return (
+            "당신은 서비스 개발 로드맵을 수립하는 PM입니다.\n\n"
+            f"[아이디어]\n{idea}\n\n"
+            f"[VPC 및 핵심 기능 정의]\n{vpc_features}"
+            f"{feedback_block}\n\n"
+            "위에서 도출된 핵심 기능들을 근거로 아래 형식에 맞춰 한국어로 작성해줘.\n\n"
+            "1. MoSCoW 분류\n"
+            "(핵심 기능들을 Must have / Should have / Could have / Won't have로 "
+            "분류. Won't have는 이번 범위에서 제외하는 이유도 한 줄로 명시)\n\n"
+            "2. Kano 모델 매핑\n"
+            "(Must have로 분류된 기능들을 Basic(당연)/Performance(성능)/"
+            "Excitement(매력) 중 하나로 매핑)\n\n"
+            "3. MVP 정의\n"
+            "(Must have 전체 + Performance 핵심 + Excitement 1~2개로 MVP 범위 확정, "
+            "이유와 함께)\n\n"
+            "4. 마일스톤 & KPI\n"
+            "(MVP 이후 2~3개월 단위 마일스톤 3~4개 + 출시 후 확인할 KPI 2~3개)\n\n"
+            "5. Epic 예시\n"
+            "(MVP 기능을 Epic 2~3개로 묶어서 나열. 각 Epic마다 대표 User Story 1개를 "
+            "'As a ~, I want ~, So that ~' 형식으로, Acceptance Criteria는 "
+            "'Given ~, When ~, Then ~' 형식으로 하나씩만 작성)"
         )
 
     async def classify_feedback_intent(self, stage: str, message: str) -> str:
@@ -227,35 +379,48 @@ class LLMClient:
         return [kw.strip(" *") for kw in first_line.split(",") if kw.strip(" *")]
 
     async def synthesize_draft(
-        self, market_research: str, pestel: str, competitor_analysis: str
+        self,
+        market_research: str,
+        pestel: str,
+        lean_canvas: str,
+        competitor_analysis: str,
+        market_sizing: str,
+        vpc_features: str,
+        mvp_roadmap: str,
     ) -> str:
         return await self._generate(
             "당신은 스타트업 기획서를 작성하는 컨설턴트입니다.\n"
-            "아래 세 단계 분석 결과를 이미 사용자가 검토·승인한 최종 내용이니, "
+            "아래 7단계 분석 결과는 이미 사용자가 각각 검토·승인한 최종 내용이니, "
             "새로운 사실을 지어내지 말고 이 내용을 재구성·요약해서 하나의 기획서로 만들어줘.\n\n"
             f"[시장조사 분석]\n{market_research}\n\n"
             f"[PESTEL 분석]\n{pestel}\n\n"
+            f"[Lean Canvas]\n{lean_canvas}\n\n"
             f"[경쟁사 비교 분석]\n{competitor_analysis}\n\n"
-            "아래 목차와 형식을 지켜서 한국어 마크다운으로 작성해줘.\n\n"
+            f"[TAM/SAM/SOM 시장 사이징]\n{market_sizing}\n\n"
+            f"[VPC 및 핵심 기능 정의]\n{vpc_features}\n\n"
+            f"[MVP 및 개발 로드맵]\n{mvp_roadmap}\n\n"
+            "아래 목차와 형식을 지켜서 한국어 마크다운으로 작성해줘. 각 섹션은 원문을 "
+            "그대로 복붙하지 말고 핵심만 재구성해줘.\n\n"
             "# 1. 서비스 개요\n"
             "(분석 내용에서 유추할 수 있는 서비스 컨셉과 핵심 가치를 3~4문장으로)\n\n"
             "# 2. 시장조사 요약\n"
-            "(시장조사 분석 내용을 핵심만 재구성. 원문을 그대로 복붙하지 말고 요약)\n\n"
+            "(시장조사 분석 내용을 핵심만 재구성)\n\n"
             "# 3. PESTEL 분석\n"
-            "(PESTEL 분석 내용을 요약. 6개 요인과 종합 시사점 위주로)\n\n"
-            "# 4. 경쟁사 비교\n"
-            "(경쟁사 비교 분석 내용을 요약. 경쟁 구도와 차별화 포인트 위주로)\n\n"
-            "# 5. 핵심 기능\n"
-            "(시장조사의 타겟 고객 니즈, 경쟁사 비교의 차별화 포인트를 근거로 "
-            "이 서비스가 갖춰야 할 핵심 기능을 4~6개 도출해서 아래 마크다운 표로 작성해줘.\n"
-            "난이도는 개발 구현 난이도, 중요도는 서비스 핵심 가치에 대한 기여도를 뜻하며 "
-            "반드시 '상'/'중'/'하' 셋 중 하나로만 표기해줘.)\n\n"
-            "| 기능명 | 설명 | 난이도 | 중요도 |\n"
-            "|---|---|---|---|\n"
-            "| ... | ... | 상/중/하 | 상/중/하 |\n\n"
-            "# 6. 종합 결론 및 제언\n"
-            "(위 세 분석을 종합했을 때 이 아이디어의 핵심 기회 요인과 리스크를 각각 2~3개씩, "
-            "그리고 다음 단계로 무엇을 검증/실행해야 할지 제언)"
+            "(6개 요인과 종합 시사점 위주로 요약)\n\n"
+            "# 4. Lean Canvas\n"
+            "(9개 블록을 표 또는 목록으로 압축 요약 + 핵심 가설 3개)\n\n"
+            "# 5. 경쟁사 비교\n"
+            "(경쟁 구도와 차별화 포인트 위주로 요약)\n\n"
+            "# 6. 시장 규모 (TAM/SAM/SOM)\n"
+            "(TAM/SAM/SOM 수치와 산출 근거를 간결하게 정리)\n\n"
+            "# 7. 서비스 컨셉 및 핵심 기능\n"
+            "(VPC Fit 요약 + 핵심 기능 표를 그대로 재사용해서 넣어줘. "
+            "새로 기능을 지어내지 말고 원문의 표를 그대로 옮겨줘.)\n\n"
+            "# 8. 개발 로드맵\n"
+            "(MVP 범위, 마일스톤·KPI, Epic 예시를 요약)\n\n"
+            "# 9. 종합 결론 및 제언\n"
+            "(위 분석들을 종합했을 때 이 아이디어의 핵심 기회 요인과 리스크를 각각 "
+            "2~3개씩, 그리고 다음 단계로 무엇을 검증/실행해야 할지 제언)"
         )
 
 

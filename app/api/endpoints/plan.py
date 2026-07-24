@@ -6,7 +6,7 @@ from langgraph.types import Command
 
 from app.core.sse import sse_stream
 from app.graph.graph import pico_graph
-from app.graph.state import new_stage_state
+from app.graph.state import new_pico_state
 from app.schemas.plan import DraftUpdateRequest, PlanMessageRequest, PlanStartRequest
 from app.services.draft_repository import draft_repository
 
@@ -25,13 +25,7 @@ def _config(thread_id: str) -> dict:
 )
 async def start_plan(request: PlanStartRequest) -> StreamingResponse:
     thread_id = str(uuid4())
-    initial_state = {
-        "idea": request.idea,
-        "market_research": new_stage_state(),
-        "pestel": new_stage_state(),
-        "competitor_analysis": new_stage_state(),
-        "draft": "",
-    }
+    initial_state = new_pico_state(request.idea)
 
     async def events():
         yield {"thread_id": thread_id}
