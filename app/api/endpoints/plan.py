@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.graph.graph import pico_graph
 from app.graph.state import new_pico_state
 from app.models.user import User
-from app.schemas.plan import DraftUpdateRequest, PlanMessageRequest, PlanStartRequest
+from app.schemas.plan import DraftSummary, DraftUpdateRequest, PlanMessageRequest, PlanStartRequest
 from app.services import draft_repository
 
 router = APIRouter()
@@ -59,6 +59,19 @@ async def send_message(thread_id: str, request: PlanMessageRequest) -> Streaming
     return StreamingResponse(sse_stream(events()), media_type="text/event-stream")
 
 
+@router.get(
+    "/plan/drafts", summary="최근 생성한 기획서 초안 목록", response_model=list[DraftSummary]
+)
+async def list_drafts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DraftSummary]:
+    drafts = await draft_repository.list_recent(db, current_user.id)
+    return [
+        DraftSummary(thread_id=d.thread_id, idea=d.idea, created_at=d.created_at) for d in drafts
+    ]
+
+
 @router.patch("/plan/{thread_id}/draft", summary="기획서 초안 수정")
 async def update_draft(
     thread_id: str,
@@ -66,8 +79,10 @@ async def update_draft(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    draft = await draft_repository.save_draft(db, current_user.id, thread_id, request.draft)
-    return {"thread_id": thread_id, "draft": draft.content}
+    draft = await draft_repository.save_draft(
+        db, current_user.id, thread_id, request.idea, request.draft
+    )
+    return {"thread_id": thread_id, "idea": draft.idea, "draft": draft.content}
 
 
 @router.get("/plan/{thread_id}/draft", summary="기획서 초안 조회")
@@ -79,4 +94,4 @@ async def get_draft(
     draft = await draft_repository.get_draft(db, current_user.id, thread_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="draft not found")
-    return {"thread_id": thread_id, "draft": draft.content}
+    return {"thread_id": thread_id, "idea": draft.idea, "draft": draft.content}
