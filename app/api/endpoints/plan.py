@@ -1,14 +1,18 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.core.sse import sse_stream
+from app.db.session import get_db
 from app.graph.graph import pico_graph
 from app.graph.state import new_pico_state
+from app.models.user import User
 from app.schemas.plan import DraftUpdateRequest, PlanMessageRequest, PlanStartRequest
-from app.services.draft_repository import draft_repository
+from app.services import draft_repository
 
 router = APIRouter()
 
@@ -56,14 +60,23 @@ async def send_message(thread_id: str, request: PlanMessageRequest) -> Streaming
 
 
 @router.patch("/plan/{thread_id}/draft", summary="기획서 초안 수정")
-async def update_draft(thread_id: str, request: DraftUpdateRequest) -> dict:
-    draft_repository.save(thread_id, request.draft)
-    return {"thread_id": thread_id, "draft": request.draft}
+async def update_draft(
+    thread_id: str,
+    request: DraftUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    draft = await draft_repository.save_draft(db, current_user.id, thread_id, request.draft)
+    return {"thread_id": thread_id, "draft": draft.content}
 
 
 @router.get("/plan/{thread_id}/draft", summary="기획서 초안 조회")
-async def get_draft(thread_id: str) -> dict:
-    draft = draft_repository.get(thread_id)
+async def get_draft(
+    thread_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    draft = await draft_repository.get_draft(db, current_user.id, thread_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="draft not found")
-    return {"thread_id": thread_id, "draft": draft}
+    return {"thread_id": thread_id, "draft": draft.content}

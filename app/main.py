@@ -6,6 +6,7 @@ from app.core.config import settings
 
 tags_metadata = [
     {"name": "health", "description": "서버 상태 확인용 헬스체크"},
+    {"name": "auth", "description": "회원가입/로그인 및 사용자 인증"},
     {
         "name": "plan",
         "description": "LangGraph 기반 기획서 생성 파이프라인 — "
