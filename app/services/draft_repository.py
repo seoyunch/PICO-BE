@@ -1,15 +1,36 @@
-# TODO: ERD 확정 후 실제 DB(SQLAlchemy 등)로 교체
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.draft import Draft
 
 
-class DraftRepository:
-    def __init__(self) -> None:
-        self._drafts: dict[str, str] = {}
+async def save_draft(
+    db: AsyncSession, user_id: uuid.UUID, thread_id: str, idea: str, content: str
+) -> Draft:
+    draft = await db.scalar(
+        select(Draft).where(Draft.user_id == user_id, Draft.thread_id == thread_id)
+    )
+    if draft is None:
+        draft = Draft(user_id=user_id, thread_id=thread_id, idea=idea, content=content)
+        db.add(draft)
+    else:
+        draft.idea = idea
+        draft.content = content
+    await db.commit()
+    await db.refresh(draft)
+    return draft
 
-    def save(self, thread_id: str, draft: str) -> None:
-        self._drafts[thread_id] = draft
 
-    def get(self, thread_id: str) -> str | None:
-        return self._drafts.get(thread_id)
+async def get_draft(db: AsyncSession, user_id: uuid.UUID, thread_id: str) -> Draft | None:
+    return await db.scalar(
+        select(Draft).where(Draft.user_id == user_id, Draft.thread_id == thread_id)
+    )
 
 
-draft_repository = DraftRepository()
+async def list_recent(db: AsyncSession, user_id: uuid.UUID, limit: int = 4) -> list[Draft]:
+    result = await db.scalars(
+        select(Draft).where(Draft.user_id == user_id).order_by(Draft.created_at.desc()).limit(limit)
+    )
+    return list(result)
