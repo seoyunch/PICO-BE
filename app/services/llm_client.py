@@ -1,8 +1,10 @@
 import uuid
 
 import httpx
+from langfuse import observe
 
 from app.core.config import settings
+from app.core.langfuse_client import langfuse_client
 
 _STAGE_LABELS = {
     "market_research": "시장조사",
@@ -21,6 +23,7 @@ class LLMClient:
         self.model = settings.CLOVA_MODEL
         self.base_url = settings.CLOVA_API_BASE_URL
 
+    @observe(as_type="generation", name="clova_generate")
     async def _generate(self, prompt: str) -> str:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
             response = await client.post(
@@ -38,7 +41,19 @@ class LLMClient:
                 },
             )
             response.raise_for_status()
-            return response.json()["result"]["message"]["content"]
+            body = response.json()
+            content = body["result"]["message"]["content"]
+            usage = body.get("result", {}).get("usage") or {}
+            usage_details = {
+                "input": usage.get("promptTokens"),
+                "output": usage.get("completionTokens"),
+                "total": usage.get("totalTokens"),
+            }
+            langfuse_client.update_current_generation(
+                model=self.model,
+                usage_details={k: v for k, v in usage_details.items() if v is not None},
+            )
+            return content
 
     async def extract_keywords(self, idea: str) -> list[str]:
         result = await self._generate(

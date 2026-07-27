@@ -1,5 +1,8 @@
+from langfuse import observe
+from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
+from app.core.langfuse_client import langfuse_client
 from app.graph.state import DRAFT_STAGE, STAGE_ORDER, PicoState
 from app.services.llm_client import llm_client
 from app.services.search_client import search_client
@@ -96,13 +99,36 @@ _STAGE_ANALYZERS = {
 }
 
 
+@observe(name="analyze_node")
 async def analyze_node(state: PicoState) -> dict:
     return await _STAGE_ANALYZERS[state["current_stage"]](state)
 
 
 async def review_node(state: PicoState) -> dict:
+    # Not wrapped with @observe: langgraph's interrupt() pauses the graph by raising
+    # GraphInterrupt, which the OTEL span context manager marks as span-level ERROR on
+    # any exception that exits the `with` block. Since a pause is the normal case (it
+    # happens on nearly every call), GraphInterrupt is caught *inside* the block so the
+    # span exits cleanly, then re-raised after — that's the only way to keep it from
+    # being flagged as an error.
+    pending_interrupt = None
+    with langfuse_client.start_as_current_observation(name="review_node", as_type="span") as span:
+        try:
+            result = await _review_node(state, span)
+        except GraphInterrupt as e:
+            pending_interrupt = e
+        except Exception as e:
+            span.update(level="ERROR", status_message=str(e) or type(e).__name__)
+            raise
+    if pending_interrupt is not None:
+        raise pending_interrupt
+    return result
+
+
+async def _review_node(state: PicoState, span) -> dict:
     stage_key = state["current_stage"]
     stage = state[stage_key]
+    span.update(input={"stage": stage_key})
 
     decision = interrupt(
         {"stage": stage_key, "keywords": stage["keywords"], "analysis": stage["analysis"]}
@@ -144,6 +170,7 @@ def route_after_review(state: PicoState) -> str:
     return state["next_route"]
 
 
+@observe(name="draft_node")
 async def draft_node(state: PicoState) -> dict:
     draft = await llm_client.synthesize_draft(
         state["market_research"]["analysis"],
