@@ -20,7 +20,11 @@ async def _run_analysis(
     stage = state[stage_key]
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
 
-    context = {"idea": state["idea"], "keywords": keywords}
+    context = {
+        "idea": state["idea"],
+        "keywords": keywords,
+        "feedback_message": stage.get("last_feedback", ""),
+    }
     if use_search:
         query = " ".join(keywords)
         if search_query_suffix:
@@ -40,7 +44,12 @@ async def _analyze_pestel(state: PicoState) -> dict:
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
     market_research = state["market_research"]["analysis"]
 
-    context = {"idea": state["idea"], "keywords": keywords, "market_research": market_research}
+    context = {
+        "idea": state["idea"],
+        "keywords": keywords,
+        "market_research": market_research,
+        "feedback_message": stage.get("last_feedback", ""),
+    }
     query = await llm_client.decide_pestel_search_query(state["idea"], market_research)
     if query:
         context["search_results"] = await search_client.search(query)
@@ -58,6 +67,7 @@ async def _analyze_lean_canvas(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "pestel": state["pestel"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("lean_canvas", context)
     return {"lean_canvas": {**stage, "analysis": analysis}}
@@ -70,6 +80,7 @@ async def _analyze_vpc_features(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "competitor_analysis": state["competitor_analysis"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("vpc_features", context)
     return {"vpc_features": {**stage, "analysis": analysis}}
@@ -81,6 +92,7 @@ async def _analyze_mvp_roadmap(state: PicoState) -> dict:
         "idea": state["idea"],
         "keywords": stage["keywords"],
         "vpc_features": state["vpc_features"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("mvp_roadmap", context)
     return {"mvp_roadmap": {**stage, "analysis": analysis}}
@@ -160,7 +172,11 @@ async def _review_node(state: PicoState, span) -> dict:
     revise_start = time.monotonic()
     intent = await llm_client.classify_feedback_intent(stage_key, message)
     if intent == "chat":
-        answer = await llm_client.answer_question(stage_key, message, stage["analysis"])
+        search_results = await search_client.search(message)
+        answer = await llm_client.answer_question(
+            stage_key, message, stage["analysis"], search_results
+        )
+        answer = resolve_citations(answer, search_results, stage=f"{stage_key}:chat")
         chat_history = chat_history + [{"role": "assistant", "content": answer}]
         _perf_logger.info(
             "perf label=review_node:%s:chat elapsed=%.2fs",
@@ -181,6 +197,7 @@ async def _review_node(state: PicoState, span) -> dict:
             **stage,
             "chat_history": chat_history,
             "keywords": new_keywords,
+            "last_feedback": message,
             "approved": False,
         },
         "next_route": "analyze",
