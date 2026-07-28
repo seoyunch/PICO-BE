@@ -18,6 +18,7 @@ class StageState(TypedDict):
     analysis: str
     chat_history: list[dict]
     approved: bool
+    last_feedback: str
 
 
 def new_stage_state() -> StageState:
@@ -26,6 +27,7 @@ def new_stage_state() -> StageState:
         "analysis": "",
         "chat_history": [],
         "approved": False,
+        "last_feedback": "",
     }
 
 

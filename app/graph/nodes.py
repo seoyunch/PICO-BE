@@ -1,9 +1,17 @@
+import logging
+import time
+
+from langfuse import observe
+from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
+from app.core.langfuse_client import langfuse_client
 from app.graph.state import DRAFT_STAGE, STAGE_ORDER, PicoState
 from app.services.llm_client import llm_client
 from app.services.search_client import search_client
-from app.utils.citations import verify_citations
+from app.utils.citations import resolve_citations
+
+_perf_logger = logging.getLogger("pico.perf")
 
 
 async def _run_analysis(
@@ -12,7 +20,11 @@ async def _run_analysis(
     stage = state[stage_key]
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
 
-    context = {"idea": state["idea"], "keywords": keywords}
+    context = {
+        "idea": state["idea"],
+        "keywords": keywords,
+        "feedback_message": stage.get("last_feedback", ""),
+    }
     if use_search:
         query = " ".join(keywords)
         if search_query_suffix:
@@ -23,7 +35,7 @@ async def _run_analysis(
 
     analysis = await llm_client.synthesize_analysis(stage_key, context)
     if use_search:
-        analysis = verify_citations(analysis, context["search_results"])
+        analysis = resolve_citations(analysis, context["search_results"], stage=stage_key)
     return {stage_key: {**stage, "keywords": keywords, "analysis": analysis}}
 
 
@@ -32,14 +44,19 @@ async def _analyze_pestel(state: PicoState) -> dict:
     keywords = stage["keywords"] or await llm_client.extract_keywords(state["idea"])
     market_research = state["market_research"]["analysis"]
 
-    context = {"idea": state["idea"], "keywords": keywords, "market_research": market_research}
+    context = {
+        "idea": state["idea"],
+        "keywords": keywords,
+        "market_research": market_research,
+        "feedback_message": stage.get("last_feedback", ""),
+    }
     query = await llm_client.decide_pestel_search_query(state["idea"], market_research)
     if query:
         context["search_results"] = await search_client.search(query)
 
     analysis = await llm_client.synthesize_analysis("pestel", context)
     if query:
-        analysis = verify_citations(analysis, context["search_results"])
+        analysis = resolve_citations(analysis, context["search_results"], stage="pestel")
     return {"pestel": {**stage, "keywords": keywords, "analysis": analysis}}
 
 
@@ -50,6 +67,7 @@ async def _analyze_lean_canvas(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "pestel": state["pestel"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("lean_canvas", context)
     return {"lean_canvas": {**stage, "analysis": analysis}}
@@ -62,6 +80,7 @@ async def _analyze_vpc_features(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "competitor_analysis": state["competitor_analysis"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("vpc_features", context)
     return {"vpc_features": {**stage, "analysis": analysis}}
@@ -73,6 +92,7 @@ async def _analyze_mvp_roadmap(state: PicoState) -> dict:
         "idea": state["idea"],
         "keywords": stage["keywords"],
         "vpc_features": state["vpc_features"]["analysis"],
+        "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("mvp_roadmap", context)
     return {"mvp_roadmap": {**stage, "analysis": analysis}}
@@ -96,13 +116,43 @@ _STAGE_ANALYZERS = {
 }
 
 
+@observe(name="analyze_node")
 async def analyze_node(state: PicoState) -> dict:
-    return await _STAGE_ANALYZERS[state["current_stage"]](state)
+    stage_key = state["current_stage"]
+    start = time.monotonic()
+    try:
+        return await _STAGE_ANALYZERS[stage_key](state)
+    finally:
+        _perf_logger.info(
+            "perf label=analyze_node:%s elapsed=%.2fs", stage_key, time.monotonic() - start
+        )
 
 
 async def review_node(state: PicoState) -> dict:
+    # Not wrapped with @observe: langgraph's interrupt() pauses the graph by raising
+    # GraphInterrupt, which the OTEL span context manager marks as span-level ERROR on
+    # any exception that exits the `with` block. Since a pause is the normal case (it
+    # happens on nearly every call), GraphInterrupt is caught *inside* the block so the
+    # span exits cleanly, then re-raised after — that's the only way to keep it from
+    # being flagged as an error.
+    pending_interrupt = None
+    with langfuse_client.start_as_current_observation(name="review_node", as_type="span") as span:
+        try:
+            result = await _review_node(state, span)
+        except GraphInterrupt as e:
+            pending_interrupt = e
+        except Exception as e:
+            span.update(level="ERROR", status_message=str(e) or type(e).__name__)
+            raise
+    if pending_interrupt is not None:
+        raise pending_interrupt
+    return result
+
+
+async def _review_node(state: PicoState, span) -> dict:
     stage_key = state["current_stage"]
     stage = state[stage_key]
+    span.update(input={"stage": stage_key})
 
     decision = interrupt(
         {"stage": stage_key, "keywords": stage["keywords"], "analysis": stage["analysis"]}
@@ -119,21 +169,35 @@ async def review_node(state: PicoState) -> dict:
             "next_route": "draft" if next_stage == DRAFT_STAGE else "analyze",
         }
 
+    revise_start = time.monotonic()
     intent = await llm_client.classify_feedback_intent(stage_key, message)
     if intent == "chat":
-        answer = await llm_client.answer_question(stage_key, message, stage["analysis"])
+        search_results = await search_client.search(message)
+        answer = await llm_client.answer_question(
+            stage_key, message, stage["analysis"], search_results
+        )
+        answer = resolve_citations(answer, search_results, stage=f"{stage_key}:chat")
         chat_history = chat_history + [{"role": "assistant", "content": answer}]
+        _perf_logger.info(
+            "perf label=review_node:%s:chat elapsed=%.2fs",
+            stage_key,
+            time.monotonic() - revise_start,
+        )
         return {
             stage_key: {**stage, "chat_history": chat_history, "approved": False},
             "next_route": "review",
         }
 
     new_keywords = await llm_client.interpret_feedback(stage_key, message, stage)
+    _perf_logger.info(
+        "perf label=review_node:%s:edit elapsed=%.2fs", stage_key, time.monotonic() - revise_start
+    )
     return {
         stage_key: {
             **stage,
             "chat_history": chat_history,
             "keywords": new_keywords,
+            "last_feedback": message,
             "approved": False,
         },
         "next_route": "analyze",
@@ -144,6 +208,7 @@ def route_after_review(state: PicoState) -> str:
     return state["next_route"]
 
 
+@observe(name="draft_node")
 async def draft_node(state: PicoState) -> dict:
     draft = await llm_client.synthesize_draft(
         state["market_research"]["analysis"],

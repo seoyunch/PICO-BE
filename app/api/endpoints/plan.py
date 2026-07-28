@@ -2,10 +2,12 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from langfuse import propagate_attributes
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.langfuse_client import langfuse_client
 from app.core.sse import sse_stream
 from app.db.session import get_db
 from app.graph.graph import pico_graph
@@ -33,10 +35,15 @@ async def start_plan(request: PlanStartRequest) -> StreamingResponse:
 
     async def events():
         yield {"thread_id": thread_id}
-        async for event in pico_graph.astream(
-            initial_state, config=_config(thread_id), stream_mode="updates"
+        with (
+            langfuse_client.start_as_current_observation(name="plan_start", as_type="span"),
+            propagate_attributes(session_id=thread_id, trace_name="plan"),
         ):
-            yield event
+            async for event in pico_graph.astream(
+                initial_state, config=_config(thread_id), stream_mode="updates"
+            ):
+                yield event
+        langfuse_client.flush()
 
     return StreamingResponse(sse_stream(events()), media_type="text/event-stream")
 
@@ -49,12 +56,17 @@ async def start_plan(request: PlanStartRequest) -> StreamingResponse:
 )
 async def send_message(thread_id: str, request: PlanMessageRequest) -> StreamingResponse:
     async def events():
-        async for event in pico_graph.astream(
-            Command(resume={"action": request.action, "message": request.message}),
-            config=_config(thread_id),
-            stream_mode="updates",
+        with (
+            langfuse_client.start_as_current_observation(name="plan_message", as_type="span"),
+            propagate_attributes(session_id=thread_id, trace_name="plan"),
         ):
-            yield event
+            async for event in pico_graph.astream(
+                Command(resume={"action": request.action, "message": request.message}),
+                config=_config(thread_id),
+                stream_mode="updates",
+            ):
+                yield event
+        langfuse_client.flush()
 
     return StreamingResponse(sse_stream(events()), media_type="text/event-stream")
 
