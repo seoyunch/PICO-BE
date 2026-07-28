@@ -68,8 +68,16 @@ jobs:
           LANGFUSE_BASE_URL=https://jp.cloud.langfuse.com
           EOF
 
-      - name: Upload .env to pico-vm
+      - name: Ensure deploy directory exists on pico-vm
         run: |
+          gcloud compute ssh pico-vm \
+            --zone=asia-northeast3-c --project=pico-503205 --tunnel-through-iap \
+            --command="mkdir -p ~/pico-be/deploy"
+
+      - name: Upload docker-compose.yml and .env to pico-vm
+        run: |
+          gcloud compute scp deploy/docker-compose.yml pico-vm:~/pico-be/deploy/docker-compose.yml \
+            --zone=asia-northeast3-c --project=pico-503205 --tunnel-through-iap
           gcloud compute scp .env.production pico-vm:~/pico-be/deploy/.env \
             --zone=asia-northeast3-c --project=pico-503205 --tunnel-through-iap
           gcloud compute ssh pico-vm \
@@ -82,4 +90,4 @@ jobs:
             --zone=asia-northeast3-c \
             --project=pico-503205 \
             --tunnel-through-iap \
-            --command="cd ~/pico-be/deploy && docker compose pull && docker compose up -d && docker image prune -f"
+            --command="cd ~/pico-be/deploy && sudo docker compose pull && sudo docker compose up -d && sudo docker image prune -f"
