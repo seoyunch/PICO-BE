@@ -1,0 +1,85 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        env:
+          IMAGE: asia-northeast3-docker.pkg.dev/pico-503205/pico-be/api
+        run: |
+          docker build -t "$IMAGE:${{ github.event.workflow_run.head_sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.event.workflow_run.head_sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Write production .env
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          CLOVA_API_KEY: ${{ secrets.CLOVA_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+        run: |
+          cat > .env.production <<EOF
+          PROJECT_NAME=PICO
+          API_STR=/api
+          BACKEND_CORS_ORIGINS=["http://localhost:3000"]
+          CLOVA_API_KEY=${CLOVA_API_KEY}
+          CLOVA_MODEL=HCX-005
+          CLOVA_API_BASE_URL=https://clovastudio.stream.ntruss.com
+          NAVER_CLIENT_ID=${NAVER_CLIENT_ID}
+          NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET}
+          DATABASE_URL=${DATABASE_URL}
+          JWT_SECRET_KEY=${JWT_SECRET_KEY}
+          JWT_ALGORITHM=HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES=60
+          REFRESH_TOKEN_EXPIRE_DAYS=14
+          COOKIE_SECURE=false
+          LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+          LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+          LANGFUSE_BASE_URL=https://jp.cloud.langfuse.com
+          EOF
+
+      - name: Upload .env to pico-vm
+        run: |
+          gcloud compute scp .env.production pico-vm:~/pico-be/deploy/.env \
+            --zone=asia-northeast3-c --project=pico-503205 --tunnel-through-iap
+          gcloud compute ssh pico-vm \
+            --zone=asia-northeast3-c --project=pico-503205 --tunnel-through-iap \
+            --command="chmod 600 ~/pico-be/deploy/.env"
+
+      - name: Deploy to pico-vm via IAP
+        run: |
+          gcloud compute ssh pico-vm \
+            --zone=asia-northeast3-c \
+            --project=pico-503205 \
+            --tunnel-through-iap \
+            --command="cd ~/pico-be/deploy && docker compose pull && docker compose up -d && docker image prune -f"
