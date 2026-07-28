@@ -1,3 +1,6 @@
+import logging
+import time
+
 from langfuse import observe
 from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
@@ -6,7 +9,9 @@ from app.core.langfuse_client import langfuse_client
 from app.graph.state import DRAFT_STAGE, STAGE_ORDER, PicoState
 from app.services.llm_client import llm_client
 from app.services.search_client import search_client
-from app.utils.citations import verify_citations
+from app.utils.citations import resolve_citations
+
+_perf_logger = logging.getLogger("pico.perf")
 
 
 async def _run_analysis(
@@ -26,7 +31,7 @@ async def _run_analysis(
 
     analysis = await llm_client.synthesize_analysis(stage_key, context)
     if use_search:
-        analysis = verify_citations(analysis, context["search_results"])
+        analysis = resolve_citations(analysis, context["search_results"], stage=stage_key)
     return {stage_key: {**stage, "keywords": keywords, "analysis": analysis}}
 
 
@@ -42,7 +47,7 @@ async def _analyze_pestel(state: PicoState) -> dict:
 
     analysis = await llm_client.synthesize_analysis("pestel", context)
     if query:
-        analysis = verify_citations(analysis, context["search_results"])
+        analysis = resolve_citations(analysis, context["search_results"], stage="pestel")
     return {"pestel": {**stage, "keywords": keywords, "analysis": analysis}}
 
 
@@ -101,7 +106,14 @@ _STAGE_ANALYZERS = {
 
 @observe(name="analyze_node")
 async def analyze_node(state: PicoState) -> dict:
-    return await _STAGE_ANALYZERS[state["current_stage"]](state)
+    stage_key = state["current_stage"]
+    start = time.monotonic()
+    try:
+        return await _STAGE_ANALYZERS[stage_key](state)
+    finally:
+        _perf_logger.info(
+            "perf label=analyze_node:%s elapsed=%.2fs", stage_key, time.monotonic() - start
+        )
 
 
 async def review_node(state: PicoState) -> dict:
@@ -145,16 +157,25 @@ async def _review_node(state: PicoState, span) -> dict:
             "next_route": "draft" if next_stage == DRAFT_STAGE else "analyze",
         }
 
+    revise_start = time.monotonic()
     intent = await llm_client.classify_feedback_intent(stage_key, message)
     if intent == "chat":
         answer = await llm_client.answer_question(stage_key, message, stage["analysis"])
         chat_history = chat_history + [{"role": "assistant", "content": answer}]
+        _perf_logger.info(
+            "perf label=review_node:%s:chat elapsed=%.2fs",
+            stage_key,
+            time.monotonic() - revise_start,
+        )
         return {
             stage_key: {**stage, "chat_history": chat_history, "approved": False},
             "next_route": "review",
         }
 
     new_keywords = await llm_client.interpret_feedback(stage_key, message, stage)
+    _perf_logger.info(
+        "perf label=review_node:%s:edit elapsed=%.2fs", stage_key, time.monotonic() - revise_start
+    )
     return {
         stage_key: {
             **stage,

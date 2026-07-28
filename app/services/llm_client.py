@@ -5,6 +5,7 @@ from langfuse import observe
 
 from app.core.config import settings
 from app.core.langfuse_client import langfuse_client
+from app.utils.perf import timed
 
 _SECTION_FORMAT_RULE = (
     "[형식 규칙 - 반드시 지켜줘]\n"
@@ -12,6 +13,23 @@ _SECTION_FORMAT_RULE = (
     "- 제목 줄 바로 다음 줄부터 본문을 시작해줘(제목과 본문 사이에 다른 문장 없이 줄바꿈만).\n"
     "- 제목에 '**' 같은 마크다운 강조 기호를 붙이지 마.\n\n"
 )
+
+_CITATION_INSTRUCTION = (
+    "출처를 표시할 때는 절대 URL이나 링크 텍스트를 직접 쓰지 말고, 위 검색 결과 번호만 "
+    "대괄호로 표시해(예: [1], [3]). 실제 링크는 시스템이 번호에 맞춰 자동으로 채워 넣으니 "
+    "번호 외에 다른 텍스트는 쓰지 마. <a href=...> 같은 HTML 태그나 마크다운 링크 문법도 "
+    "절대 쓰지 마 — 순수 텍스트로 번호만 적어."
+)
+
+
+def _numbered_sources(search_results: list[dict]) -> str:
+    if not search_results:
+        return "(검색 결과 없음)"
+    return "\n".join(
+        f"[{i}] {r.get('title', '')}\n    {r.get('description', '')}"
+        for i, r in enumerate(search_results, start=1)
+    )
+
 
 _STAGE_LABELS = {
     "market_research": "시장조사",
@@ -30,6 +48,7 @@ class LLMClient:
         self.model = settings.CLOVA_MODEL
         self.base_url = settings.CLOVA_API_BASE_URL
 
+    @timed("clova_generate")
     @observe(as_type="generation", name="clova_generate")
     async def _generate(self, prompt: str) -> str:
         async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
@@ -92,13 +111,7 @@ class LLMClient:
         idea = context.get("idea", "")
         keywords = context.get("keywords", [])
         search_results = context.get("search_results", [])
-        sources_text = (
-            "\n".join(
-                f"- {r.get('title', '')}: {r.get('link', '')}\n  {r.get('description', '')}"
-                for r in search_results
-            )
-            or "(검색 결과 없음)"
-        )
+        sources_text = _numbered_sources(search_results)
         return (
             "당신은 스타트업 아이디어의 시장조사를 담당하는 애널리스트입니다.\n"
             "PESTEL 분석과 경쟁사 비교분석은 이후 별도 단계에서 다루니, "
@@ -120,7 +133,8 @@ class LLMClient:
             "4. 핵심 트렌드/시그널\n"
             "- (시장 동향·화제성 관련 포인트 3~5개, 각 한 줄)\n\n"
             "5. 참고한 출처\n"
-            "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열)"
+            "- (위 검색 결과 중 실제로 참고한 것만 번호로 나열)\n"
+            f"{_CITATION_INSTRUCTION}"
         )
 
     async def decide_pestel_search_query(self, idea: str, market_research: str) -> str | None:
@@ -147,15 +161,12 @@ class LLMClient:
         additional_search_block = ""
         sources_instruction = ""
         if search_results:
-            sources_text = "\n".join(
-                f"- {r.get('title', '')}: {r.get('link', '')}\n  {r.get('description', '')}"
-                for r in search_results
-            )
+            sources_text = _numbered_sources(search_results)
             additional_search_block = f"\n\n[추가 검색 결과]\n{sources_text}"
             sources_instruction = (
                 "\n\n8. 참고한 출처\n"
-                "- (위 추가 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열. "
-                "검색 결과에 없는 링크는 절대 지어내지 마)"
+                "- (위 추가 검색 결과 중 실제로 참고한 것만 번호로 나열)\n"
+                f"{_CITATION_INSTRUCTION}"
             )
 
         return (
@@ -243,13 +254,7 @@ class LLMClient:
         idea = context.get("idea", "")
         keywords = context.get("keywords", [])
         search_results = context.get("search_results", [])
-        sources_text = (
-            "\n".join(
-                f"- {r.get('title', '')}: {r.get('link', '')}\n  {r.get('description', '')}"
-                for r in search_results
-            )
-            or "(검색 결과 없음)"
-        )
+        sources_text = _numbered_sources(search_results)
         return (
             "당신은 스타트업 아이디어의 경쟁사를 비교분석하는 애널리스트입니다.\n"
             "시장 규모나 PESTEL 같은 거시환경 얘기는 다른 단계에서 다루니 "
@@ -275,7 +280,8 @@ class LLMClient:
             "3. 차별화 포인트\n"
             "(위 경쟁사 대비 이 아이디어가 가질 수 있는 차별화 요소 2~3개)\n\n"
             "4. 참고한 출처\n"
-            "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열)"
+            "- (위 검색 결과 중 실제로 참고한 것만 번호로 나열)\n"
+            f"{_CITATION_INSTRUCTION}"
         )
 
     def _market_sizing_prompt(self, context: dict) -> str:
@@ -283,13 +289,7 @@ class LLMClient:
         keywords = context.get("keywords", [])
         market_research = context.get("market_research", "")
         search_results = context.get("search_results", [])
-        sources_text = (
-            "\n".join(
-                f"- {r.get('title', '')}: {r.get('link', '')}\n  {r.get('description', '')}"
-                for r in search_results
-            )
-            or "(검색 결과 없음)"
-        )
+        sources_text = _numbered_sources(search_results)
         return (
             "당신은 시장 규모를 추정하는 애널리스트입니다. TAM/SAM/SOM을 산정합니다.\n\n"
             f"[아이디어]\n{idea}\n\n"
@@ -309,8 +309,9 @@ class LLMClient:
             "(Top-down 추정치와, 가능하면 Bottom-up 추정치(고객수 × 단가 × 이용빈도)를 "
             "비교해서 두 방식이 얼마나 일치/차이 나는지 서술)\n\n"
             "5. 참고한 출처\n"
-            "- (위 검색 결과 중 실제로 참고한 것만 제목과 링크로 나열. 없으면 "
-            "'참고할 만한 검색 출처 없음, 일반 상식 기반 추정'이라고 밝혀줘)"
+            "- (위 검색 결과 중 실제로 참고한 것만 번호로 나열. 없으면 "
+            "'참고할 만한 검색 출처 없음, 일반 상식 기반 추정'이라고 밝혀줘)\n"
+            f"{_CITATION_INSTRUCTION}"
         )
 
     def _vpc_features_prompt(self, context: dict) -> str:
