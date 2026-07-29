@@ -170,7 +170,9 @@ class LLMClient:
         keywords = context.get("keywords", [])
         search_results = context.get("search_results", [])
         sources_text = _numbered_sources(search_results)
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 스타트업 아이디어의 시장조사를 담당하는 애널리스트입니다.\n"
             "PESTEL 분석과 경쟁사 비교분석은 이후 별도 단계에서 다루니, "
@@ -221,7 +223,9 @@ class LLMClient:
         additional_search_block = ""
         if search_results:
             additional_search_block = f"\n\n[추가 검색 결과]\n{_numbered_sources(search_results)}"
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
 
         citations_key_line = (
             '"citations": [실제로 참고한 검색 결과 번호만 정수로, 예: 1, 3],\n'
@@ -283,19 +287,27 @@ class LLMClient:
             parts += ["", "8. 참고한 출처", *(lines or ["- (참고한 출처 없음)"])]
         return "\n".join(parts)
 
-    def _feedback_points_block(self, feedback_message: str) -> str:
+    def _revision_context_block(self, previous_analysis: str, feedback_message: str) -> str:
         if not feedback_message:
             return ""
+        previous_block = f"\n\n[기존 분석 결과]\n{previous_analysis}" if previous_analysis else ""
         return (
-            "\n\n[사용자 수정 요청 원문 - 이 요청이 실제로 반영되도록 본문 내용을 그에 맞게 "
-            f"바꿔줘]\n{feedback_message}"
+            f"{previous_block}\n\n"
+            f"[사용자 수정 요청 원문]\n{feedback_message}\n\n"
+            "위 수정 요청을 반영해줘. [기존 분석 결과]가 있다면 그걸 베이스로 삼아서, "
+            "요청과 관련 없는 내용은 최대한 그대로 유지하고 요청과 관련된 부분만 고치거나 "
+            "덧붙여줘. 다만 사용자가 '처음부터 다시', '전체를 다시 조사/작성해줘'처럼 "
+            "전면 재작성을 명확히 요청한 경우에는 기존 내용에 얽매이지 말고 완전히 새로 "
+            "작성해도 돼."
         )
 
     def _lean_canvas_prompt(self, context: dict) -> str:
         idea = context.get("idea", "")
         market_research = context.get("market_research", "")
         pestel = context.get("pestel", "")
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 스타트업 비즈니스 모델을 설계하는 전략가입니다. "
             "Lean Canvas 9개 블록을 가설 형태로 작성합니다.\n\n"
@@ -374,7 +386,9 @@ class LLMClient:
         keywords = context.get("keywords", [])
         search_results = context.get("search_results", [])
         sources_text = _numbered_sources(search_results)
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 스타트업 아이디어의 경쟁사를 비교분석하는 애널리스트입니다.\n"
             "시장 규모나 PESTEL 같은 거시환경 얘기는 다른 단계에서 다루니 "
@@ -411,7 +425,9 @@ class LLMClient:
         market_research = context.get("market_research", "")
         search_results = context.get("search_results", [])
         sources_text = _numbered_sources(search_results)
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 시장 규모를 추정하는 애널리스트입니다. TAM/SAM/SOM을 산정합니다.\n\n"
             f"[아이디어]\n{idea}\n\n"
@@ -441,7 +457,9 @@ class LLMClient:
         idea = context.get("idea", "")
         market_research = context.get("market_research", "")
         competitor_analysis = context.get("competitor_analysis", "")
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 Value Proposition Canvas(VPC)로 서비스 컨셉과 핵심 기능을 "
             "정의하는 PO입니다.\n\n"
@@ -516,7 +534,9 @@ class LLMClient:
     def _mvp_roadmap_prompt(self, context: dict) -> str:
         idea = context.get("idea", "")
         vpc_features = context.get("vpc_features", "")
-        feedback_block = self._feedback_points_block(context.get("feedback_message", ""))
+        feedback_block = self._revision_context_block(
+            context.get("previous_analysis", ""), context.get("feedback_message", "")
+        )
         return (
             "당신은 서비스 개발 로드맵을 수립하는 PM입니다.\n\n"
             f"[아이디어]\n{idea}\n\n"

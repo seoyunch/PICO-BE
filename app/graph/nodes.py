@@ -23,6 +23,7 @@ async def _run_analysis(
     context = {
         "idea": state["idea"],
         "keywords": keywords,
+        "previous_analysis": stage["analysis"],
         "feedback_message": stage.get("last_feedback", ""),
     }
     if use_search:
@@ -48,6 +49,7 @@ async def _analyze_pestel(state: PicoState) -> dict:
         "idea": state["idea"],
         "keywords": keywords,
         "market_research": market_research,
+        "previous_analysis": stage["analysis"],
         "feedback_message": stage.get("last_feedback", ""),
     }
     query = await llm_client.decide_pestel_search_query(state["idea"], market_research)
@@ -67,6 +69,7 @@ async def _analyze_lean_canvas(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "pestel": state["pestel"]["analysis"],
+        "previous_analysis": stage["analysis"],
         "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("lean_canvas", context)
@@ -80,6 +83,7 @@ async def _analyze_vpc_features(state: PicoState) -> dict:
         "keywords": stage["keywords"],
         "market_research": state["market_research"]["analysis"],
         "competitor_analysis": state["competitor_analysis"]["analysis"],
+        "previous_analysis": stage["analysis"],
         "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("vpc_features", context)
@@ -92,6 +96,7 @@ async def _analyze_mvp_roadmap(state: PicoState) -> dict:
         "idea": state["idea"],
         "keywords": stage["keywords"],
         "vpc_features": state["vpc_features"]["analysis"],
+        "previous_analysis": stage["analysis"],
         "feedback_message": stage.get("last_feedback", ""),
     }
     analysis = await llm_client.synthesize_analysis("mvp_roadmap", context)
