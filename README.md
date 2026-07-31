@@ -1,7 +1,7 @@
-# PICO - <부재목>
-<img width="1920" height="1080" alt="mockup" src="https://github.com/user-attachments/assets/5504c112-b393-403c-8636-f297fa7e0fad" />
+# PICO - AI와 함께 완성하는 서비스 기획서
+// 사진 (목업 이미지)
 
-> <한줄 설명>
+> 아이디어 한 줄이면, 시장조사부터 MVP 로드맵까지 7단계 기획 문서를 AI와 단계별로 검토·수정하며 완성한다
 
 ---
 
@@ -11,7 +11,21 @@
   <tr>
     <td align="center" style="width: 50%; padding: 10px;">
       // 사진
-      <p><strong>기능 명</strong></p>
+      <p><strong>7단계 자동 기획 파이프라인</strong></p>
+    </td>
+    <td align="center" style="width: 50%; padding: 10px;">
+      // 사진
+      <p><strong>단계별 승인/수정/질문 리뷰</strong></p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" style="width: 50%; padding: 10px;">
+      // 사진
+      <p><strong>근거 출처 기반 리서치(검증된 출처만 인용)</strong></p>
+    </td>
+    <td align="center" style="width: 50%; padding: 10px;">
+      // 사진
+      <p><strong>최종 기획서 합성 및 자유 편집</strong></p>
     </td>
   </tr>
 </table>
@@ -22,51 +36,70 @@
 
 | 영역 | 선택 |
 |---|---|
-| 백엔드 | 백엔드 스택 |
-| 인프라 | 인프라 스택 |
-| DB | DB 스택 |
-| 프론트엔드 | 프론트 스택 |
+| 백엔드 | FastAPI, LangGraph, SQLAlchemy(Async) |
+| LLM / 검색 | HyperCLOVA X (CLOVA Studio), Naver Search API(NCP API HUB) |
+| 인프라 | GCP (Compute Engine, Load Balancing, Artifact Registry), Docker, GitHub Actions |
+| DB | PostgreSQL(Supabase), Redis |
 //추가 가능
 
 ## 아키텍처
 
-```
-System Arichtecture, LangGraph Arichitecture 간단 설명이랑 사진
-```
+**System Architecture**
+
+// 사진
+
+FE(SSE 클라이언트) - FastAPI - LangGraph 그래프 - CLOVA Studio/Naver 검색 - PostgreSQL/Redis로 이어지는 전체 시스템 구성.
+
+**LangGraph Architecture**
+
+// 사진
+
+`analyze_node → review_node → (loop back 또는 draft_node)` 3개 노드로만 구성되며, 7단계 기획 프로세스는 그래프 구조가 아니라 `current_stage` 값으로 다뤄진다.
 
 ---
 
 ## 시작하기(현재 구조에 맞게 수정)
 
 ### 사전 준비
-- Python 3.12+
-- Node.js (프론트엔드 빌드용)
-- [RTZR](https://developers.rtzr.ai) 계정의 `client_id` / `client_secret`
+- Python 3.12 (3.14는 pydantic-core 빌드 실패로 사용 불가)
+- PostgreSQL (Supabase 등)
+- Redis
+- [CLOVA Studio](https://clovastudio.ncloud.com) API 키
+- Naver API HUB(NCP) `Client ID` / `Client Secret`
 
 ### 실행 방법
 
 ```bash
 git clone <repo-url>
-cd mori
+cd PICO-BE
 
-./setup.sh                # Python venv 생성 + 의존성 설치 + 프론트엔드 빌드
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt   # requirements.txt + pytest/ruff 포함
 
-cp .env.example .env      # RTZR_CLIENT_ID / RTZR_CLIENT_SECRET 값 채우기
+cp .env.example .env      # 아래 값 채워주기
 ```
 `.env`에 아래 값을 채워주세요.
 
 ```
-RTZR_CLIENT_ID=
-RTZR_CLIENT_SECRET=
+CLOVA_API_KEY=
+CLOVA_MODEL=HCX-005
+CLOVA_API_BASE_URL=https://clovastudio.stream.ntruss.com
+
+NAVER_CLIENT_ID=
+NAVER_CLIENT_SECRET=
+
+DATABASE_URL=
+JWT_SECRET_KEY=
+REDIS_URL=redis://localhost:6379/0
 ```
-[RTZR 개발자 콘솔](https://developers.rtzr.ai)에서 회원가입 후 앱을 생성하면 `client_id`/`client_secret`을 발급받을 수 있습니다.
 
 ```bash
-source .venv/bin/activate
-uvicorn backend.main:app --reload
+alembic upgrade head
+uvicorn app.main:app --reload
 ```
 
-브라우저에서 `http://localhost:8000` 접속.
+`http://localhost:8000/api/health` 접속해서 정상 기동 확인.
 
 
 ---
@@ -74,22 +107,32 @@ uvicorn backend.main:app --reload
 ## 프로젝트 구조(수정해야함. 현재 구조에 맞게)
 
 ```
-mori/
-├── setup.sh
-├── .env.example
+PICO-BE/
 ├── requirements.txt
-├── emotion_keywords.json      # 감정 카테고리별 키워드 정의
-├── backend/
-│   ├── main.py                 # FastAPI 앱, 
-│   ├── rtzr_streaming_client.py
-│   ├── db.py
-│   ├── analysis.py            
-│   └── models.py
-└── frontend/
-    ├── src/
-    │   ├── app.ts
-    │   └── audio-worklet-processor.ts
-    ├── index.html
-    ├── styles.css
-    └── tsconfig.json
+├── requirements-dev.txt
+├── Dockerfile
+├── alembic/                    # DB 마이그레이션
+├── deploy/
+│   ├── docker-compose.yml      # 배포 VM에서 실행되는 api + redis
+│   └── gcp-setup.sh            # 1회성 GCP 인프라 부트스트랩
+├── app/
+│   ├── main.py                 # FastAPI 앱 엔트리포인트
+│   ├── api/
+│   │   ├── api.py              # 라우터 등록
+│   │   ├── deps.py
+│   │   └── endpoints/          # auth.py, plan.py, health.py
+│   ├── core/                   # config, security, sse, langfuse_client
+│   ├── graph/
+│   │   ├── graph.py             # LangGraph 그래프 정의
+│   │   ├── nodes.py             # 노드 로직 + 단계별 분석 함수
+│   │   └── state.py             # PicoState, STAGE_ORDER
+│   ├── services/
+│   │   ├── llm_client.py        # CLOVA 클라이언트 + 단계별 프롬프트
+│   │   ├── search_client.py     # Naver 검색 클라이언트
+│   │   └── draft_repository.py
+│   ├── models/                  # user, draft
+│   ├── schemas/                 # auth, plan
+│   ├── utils/                   # citations, perf
+│   └── db/                      # session, redis, base
+└── tests/
 ```
